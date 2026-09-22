@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" commit="a5107ccbeaf946a714481bda6fa09fef2ca91234">
+<index version="1" commit="a5107ccbeaf946a714481bda6fa09fef2ca91234" name="Antisample Shredder">
   <category name="Script">
     <reapack name="Antisample_Shredder_UI.lua" type="script" desc="Antisample Shredder">
       <metadata>
