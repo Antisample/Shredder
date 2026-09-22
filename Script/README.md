@@ -106,17 +106,3 @@ starter presets ship in `Presets/`.
 - **Render Settings** - naming pattern for the glued result (when Cut but
   don't render is off), with `{name}`/`{number}`/`{mode}`/`{date}`/`{time}`
   wildcards and a live preview.
-
-## Files
-
-```
-Antisample_Shredder_UI.lua       - the script you run/bind to an action
-Antisample_Shredder_Engine.lua   - dependency, launched by the UI script
-Presets/                         - starter presets (Classic Glitch,
-                                    Blackhole Stutter, Morse SOS)
-CHANGELOG.md                     - full version history
-```
-
-## Changelog
-
-See [CHANGELOG.md](https://github.com/Antisample/Shredder/blob/main/Engine/CHANGELOG.md) for the full version history.
