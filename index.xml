@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" commit="a5107ccbeaf946a714481bda6fa09fef2ca91234" name="Antisample Shredder">
+<index version="1" commit="02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c" name="Antisample Shredder">
   <category name="Script">
     <reapack name="Antisample_Shredder_UI.lua" type="script" desc="Antisample Shredder">
       <metadata>
@@ -31,6 +31,27 @@ and added matching bottom spacing after Preview.]]></changelog>
         <source file="Presets/Synced Randomnes.txt">https://github.com/Antisample/Shredder/raw/a5107ccbeaf946a714481bda6fa09fef2ca91234/Script/Presets/Synced%20Randomnes.txt</source>
         <source file="CHANGELOG.md">https://github.com/Antisample/Shredder/raw/a5107ccbeaf946a714481bda6fa09fef2ca91234/Script/CHANGELOG.md</source>
         <source file="README.md">https://github.com/Antisample/Shredder/raw/a5107ccbeaf946a714481bda6fa09fef2ca91234/Script/README.md</source>
+      </version>
+      <version name="1.48" author="Zdravko Djordjević" time="2026-09-24T23:22:25Z">
+        <changelog><![CDATA[See CHANGELOG.md for the full version history - this header only
+carries the most recent entry, for ReaPack's package details view.
+v1.48: New per-chunk Stretch (+/-1000%, pitch preserved); take
+pitch shift / time stretch mode setting (Fixed or Randomized per
+chunk); rewritten multi-band Transient detector with sample-
+accurate, zero-crossing cuts; Init renames the preset and a "*"
+marks edited presets; collapsible, tidier Settings tab with a
+pinned status bar.]]></changelog>
+        <source main="main">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Antisample_Shredder_UI.lua</source>
+        <source file="Antisample_Shredder_Engine.lua">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Antisample_Shredder_Engine.lua</source>
+        <source file="Presets/Blackhole Stutter.txt">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Presets/Blackhole%20Stutter.txt</source>
+        <source file="Presets/Classic Glitch.txt">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Presets/Classic%20Glitch.txt</source>
+        <source file="Presets/Every 3rd Number.txt">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Presets/Every%203rd%20Number.txt</source>
+        <source file="Presets/Fibonacci 13 segments.txt">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Presets/Fibonacci%2013%20segments.txt</source>
+        <source file="Presets/Glitch me out.txt">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Presets/Glitch%20me%20out.txt</source>
+        <source file="Presets/Morse Shredder.txt">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Presets/Morse%20Shredder.txt</source>
+        <source file="Presets/Synced Randomnes.txt">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/Presets/Synced%20Randomnes.txt</source>
+        <source file="CHANGELOG.md">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/CHANGELOG.md</source>
+        <source file="README.md">https://github.com/Antisample/Shredder/raw/02cf050f1e9d4ca0f0ef7d08cb7bae2d43fd210c/Script/README.md</source>
       </version>
     </reapack>
   </category>
