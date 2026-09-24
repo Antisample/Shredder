@@ -3,11 +3,34 @@
 All notable changes to Antisample Shredder (`Antisample_Shredder_UI.lua` +
 `Antisample_Shredder_Engine.lua`) are documented here, newest first.
 
-Entries prefixed `v1.x` cover the current, fixed-filename era. Entries prefixed
-`V2`-`V11` (no decimal) predate that convention, when each major revision of the
-UI shipped under its own versioned filename (`Antisample_Shredder_UI_V2.lua`,
-`_V3.lua`, and so on) - those entries are preserved here exactly as originally
-written, including their references to those older filenames.
+## v1.48
+
+Engine + UI. New per-chunk Stretch, pitch shift / time stretch mode control, a rewritten Transient detector, preset-bar fixes, and a Settings tab cleanup.
+
+**Stretch (Chunk Randomization).** New "Stretch (%)" slider (0-1000, default 0) with the same `<-` / `<->` / `->` Direction buttons as Pitch/Pan/Volume - each chunk gets its own random time-stretch in [-X, +X]%. Scale is symmetric: +100% = twice as long, +1000% = 11x; -100% = half length, -1000% = 1/11 (a literal -100% would mean zero length). Pitch is preserved. Engine side: new `apply_stretch()` runs after repeats/palindrome and BEFORE `place_segments_sequentially()`, so stretched lengths still lay out gapless; it multiplies `D_LENGTH` by the factor, divides `D_PLAYRATE` by it, and turns on `B_PPITCH`. Rate and Pitch randomization now fold the stretch in rather than overwriting it (via a per-segment `stretch_info` table) - and for takes that weren't already preserving pitch, the pitch shift Rate would have caused through resampling is re-added as an explicit `D_PITCH` offset, so Rate keeps its usual pitch-bending character on stretched chunks. Unstretched chunks behave exactly as before. Part of the preset schema (`ShredderStretch`, `ShredderStretchDirection`), reset by Init, and rolled by the Random button (new "Stretch" checkbox under Randomization Settings, `ShredderRandIncludeStretch`).
+
+**Take Pitch Shift / Time Stretch Mode (Settings > Shredder Behaviour).** Mode + Submode dropdowns listing every mode REAPER itself reports (`EnumPitchShiftModes` / `EnumPitchShiftSubModes`, enumerated once and cached), plus "Project default". The chosen mode is written to every chunk's `I_PITCHMODE`; Project default leaves takes untouched. New Fixed/Randomized toggle alongside it: Fixed uses the dropdown's mode; Randomized gives each chunk an independent random pick from Project default / élastique 3 Pro / Rrreeeaaa / ReaReaRea (dropdown hidden while Randomized). The engine resolves those three by name at run time rather than by hard-coded index, so they survive index differences between REAPER versions - any this install doesn't have is simply left out of the pool; each uses its default (first) submode. Both settings are in the preset schema (`ShredderPitchMode`, `ShredderPitchModeRandom`) and reset by Init.
+
+**Transient cut mode - rewritten detector.** The old detector read audio at 4kHz (hi-hats/clicks were nearly invisible), used a fixed rise of X% of full scale (quiet takes never cut, loud ones over-cut), snapped cuts to a 10ms grid (often landing mid-attack), and kept the first of two close hits rather than the stronger. New `generate_cut_positions_by_onset()`:
+- Analyses at 22.05kHz in ~5.8ms frames, tracking low (<150Hz), high (>4kHz), and full-band level separately - a hi-hat over a sustained bass note now registers.
+- Onset strength is the summed dB rise across bands, measured two frames back so attacks straddling a frame boundary aren't halved. Working in dB makes it level-independent.
+- Frames more than 50dB below the item's loudest frame are ignored (noise floors, reverb tails).
+- Adaptive peak-picking: a frame must be a local maximum and beat the local average over +/-150ms by the Sensitivity-derived margin, so busy passages need a bigger jump than sparse ones.
+- Sample-accurate placement: re-reads the audio around each hit, finds where the attack rises out of what came before, backs off ~1ms of pre-roll, and snaps to the nearest preceding zero crossing - cuts land just before the hit, click-free.
+- Hits closer than 25ms (or Minimum Chunk Length, if larger) merge into the stronger one; cuts are kept at least Minimum Chunk Length from both item edges.
+
+Same Sensitivity slider and ExtState key (lower = more cuts, default 30), but the underlying scale changed, so presets using Transient mode may cut in different places than before. Help text and the engine's APPENDIX note updated to match.
+
+**Preset bar.**
+- Init now sets the preset name to "Init" instead of leaving the previous preset's name in the field.
+- New "*" next to the preset name whenever current settings differ from the loaded preset (hover for a tooltip). Implemented as a snapshot of every schema value taken on load/save/Init, compared live against ExtState - so reverting a change clears the mark again, and nothing touches the preset file until Save. At startup the snapshot is seeded from the preset file itself, so unsaved edits from last session still show. Fixed-width slot, so the buttons don't shift when it appears.
+
+**Settings tab.**
+- Font size moved from the top of Appearance to the bottom of the (renamed) "Font and Font Color" section.
+- Color Palette, Font and Font Color, and Layout are now collapsible sub-sections inside Appearance (slightly indented); Randomization Settings and Render Settings are now collapsible top-level sections like Shredder Behaviour. Every Settings section starts closed.
+- Cut Variance, Take Pitch Shift / Time Stretch Mode, Cut but don't render, and Hide helper text now have a `(?)` tooltip carrying their explanation, instead of a paragraph underneath.
+- Added a little top and bottom padding around the Cut Variance buttons, pitch mode dropdowns, Run Shredder button position buttons, and Font size input, plus bottom padding at the end of Render Settings.
+- The Settings tab now scrolls in its own region (same `BeginChild` negative-reserve approach as the Shredder tab), so the status bar stays pinned to the bottom of the window instead of scrolling away.
 
 ## v1.47
 

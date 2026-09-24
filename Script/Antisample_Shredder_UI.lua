@@ -1,5 +1,5 @@
 -- @description Antisample Shredder
--- @version 1.47
+-- @version 1.48
 -- @author Zdravko Djordjević
 -- @provides
 --   Antisample_Shredder_Engine.lua
@@ -27,12 +27,15 @@
 -- @changelog
 --   See CHANGELOG.md for the full version history - this header only
 --   carries the most recent entry, for ReaPack's package details view.
---   v1.47: Swapped the Mode toggle and Open Preview Window buttons'
---   order in "Now, Put It Together..." (Mode first, Preview second),
---   and added matching bottom spacing after Preview.
+--   v1.48: New per-chunk Stretch (+/-1000%, pitch preserved); take
+--   pitch shift / time stretch mode setting (Fixed or Randomized per
+--   chunk); rewritten multi-band Transient detector with sample-
+--   accurate, zero-crossing cuts; Init renames the preset and a "*"
+--   marks edited presets; collapsible, tidier Settings tab with a
+--   pinned status bar.
 
 --[[
-     Antisample Shredder UI v1.47
+     Antisample Shredder UI v1.48
      Requires: ReaImGui (via ReaPack / ReaTeam Extensions)
 
      Full version history lives in CHANGELOG.md (in the same folder as
@@ -366,6 +369,11 @@ local KEYS = {
   Shredder_REVERSE = "ShredderReverse",
   Shredder_REPEAT = "ShredderRepeat",
   Shredder_MUTE = "ShredderMute",
+  Shredder_STRETCH = "ShredderStretch",
+  Shredder_STRETCH_DIRECTION = "ShredderStretchDirection",
+  Shredder_RAND_INCLUDE_STRETCH = "ShredderRandIncludeStretch",
+  Shredder_PITCH_MODE = "ShredderPitchMode",
+  Shredder_PITCH_MODE_RANDOM = "ShredderPitchModeRandom",
   -- V2 additions:
   Shredder_BEAT_DIVISION = "ShredderBeatDivision",
   Shredder_BEAT_VARIANCE = "ShredderBeatVariance",
@@ -507,6 +515,7 @@ local SHREDDER_PRESET_SCHEMA = {
   { key = KEYS.Shredder_REVERSE, kind = "num" },
   { key = KEYS.Shredder_REPEAT, kind = "num" },
   { key = KEYS.Shredder_MUTE, kind = "num" },
+  { key = KEYS.Shredder_STRETCH, kind = "num" },
   -- Everything below lives in the SD table
   { key = KEYS.Shredder_SHUFFLE_MODE, kind = "str", sd = "shuffle_mode" },
   { key = KEYS.Shredder_LOCAL_WINDOW, kind = "num", sd = "local_window" },
@@ -545,6 +554,7 @@ local SHREDDER_PRESET_SCHEMA = {
   { key = KEYS.Shredder_PITCH_DIRECTION, kind = "str", sd = "pitch_direction" },
   { key = KEYS.Shredder_PAN_DIRECTION, kind = "str", sd = "pan_direction" },
   { key = KEYS.Shredder_VOLUME_DIRECTION, kind = "str", sd = "volume_direction" },
+  { key = KEYS.Shredder_STRETCH_DIRECTION, kind = "str", sd = "stretch_direction" },
   -- v1.35: Scatter Repeats (see the APPENDIX (V15) note in the engine
   -- file) - a genuine sound-affecting setting, unlike the render/
   -- workflow prefs above, so it's part of the schema.
@@ -553,6 +563,8 @@ local SHREDDER_PRESET_SCHEMA = {
   -- file) - also sound-affecting, displayed in Settings but still
   -- part of the schema for the same reason Scatter Repeats is.
   { key = KEYS.Shredder_CUT_LENGTH_FIXED, kind = "bool", sd = "cut_length_fixed" },
+  { key = KEYS.Shredder_PITCH_MODE, kind = "num", sd = "pitch_mode" },
+  { key = KEYS.Shredder_PITCH_MODE_RANDOM, kind = "bool", sd = "pitch_mode_random" },
 }
 
 -- Presets live in a "Presets" subfolder right next to this script
@@ -633,6 +645,32 @@ end
 
 local function shredder_delete_preset(name)
   os.remove(shredder_preset_path(name))
+end
+
+-- Edited-preset tracking: a snapshot of every schema setting as it was
+-- when the current preset was loaded/saved/Init'd. The preset bar shows
+-- "*" whenever the live ExtState values differ from it - so changing a
+-- value back clears the mark again. Nothing is written to disk until
+-- the user saves. `file_values` (optional) seeds the snapshot from a
+-- preset file instead of the live values - used at startup, so edits
+-- made last session still show as edited.
+local shredder_preset_baseline = {}
+
+local function shredder_snapshot_preset_baseline(file_values)
+  for _, entry in ipairs(SHREDDER_PRESET_SCHEMA) do
+    local v = file_values and file_values[entry.key]
+    if v == nil then v = reaper.GetExtState(EXT_SECTION, entry.key) end
+    shredder_preset_baseline[entry.key] = v
+  end
+end
+
+local function shredder_preset_is_dirty()
+  for _, entry in ipairs(SHREDDER_PRESET_SCHEMA) do
+    if reaper.GetExtState(EXT_SECTION, entry.key) ~= shredder_preset_baseline[entry.key] then
+      return true
+    end
+  end
+  return false
 end
 
 
@@ -1074,6 +1112,7 @@ local SD = {
   pitch_direction = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_PITCH_DIRECTION),
   pan_direction = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_PAN_DIRECTION),
   volume_direction = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_VOLUME_DIRECTION),
+  stretch_direction = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_STRETCH_DIRECTION),
 
   -- v1.23: workflow/appearance preferences, not "sound" settings - not
   -- part of the preset schema, same reasoning as show_preview/font_size.
@@ -1101,6 +1140,7 @@ local SD = {
   rand_include_reverse = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_RAND_INCLUDE_REVERSE) ~= "0",
   rand_include_repeat = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_RAND_INCLUDE_REPEAT) ~= "0",
   rand_include_mute = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_RAND_INCLUDE_MUTE) ~= "0",
+  rand_include_stretch = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_RAND_INCLUDE_STRETCH) ~= "0",
 
   -- v1.34: naming pattern for the glued render - see the engine's
   -- expand_render_name_pattern() for the full wildcard list and how
@@ -1135,15 +1175,25 @@ local SD = {
   -- displayed in the Settings tab rather than next to the Cut Length
   -- slider itself, per how this was asked for.
   cut_length_fixed = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_CUT_LENGTH_FIXED) == "1",
+
+  -- Take pitch shift / time stretch mode for every segment, in
+  -- REAPER's I_PITCHMODE encoding ((shifter << 16) | submode); -1 =
+  -- project default. Sound-affecting, so part of the preset schema.
+  pitch_mode = math.floor(tonumber(reaper.GetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE)) or -1),
+  -- Randomized: each chunk picks randomly between Project default,
+  -- elastique 3 Pro, Rrreeeaaa, and ReaReaRea instead of using pitch_mode.
+  pitch_mode_random = reaper.GetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE_RANDOM) == "1",
 }
 if SD.pin_position ~= "top" then SD.pin_position = "bottom" end
 if SD.render_name_pattern == "" then SD.render_name_pattern = "Shredder_{number}" end
 if SD.preset_name == "" then SD.preset_name = "Preset" end
+shredder_snapshot_preset_baseline(shredder_read_preset_file(SD.preset_name))
 local function valid_direction(d) return d == "neg" or d == "pos" or d == "both" end
 if not valid_direction(SD.position_direction) then SD.position_direction = "both" end
 if not valid_direction(SD.pitch_direction) then SD.pitch_direction = "both" end
 if not valid_direction(SD.pan_direction) then SD.pan_direction = "both" end
 if not valid_direction(SD.volume_direction) then SD.volume_direction = "both" end
+if not valid_direction(SD.stretch_direction) then SD.stretch_direction = "both" end
 if SD.chunk_fate_view ~= "multi" then SD.chunk_fate_view = "single" end
 if SD.pitagora_triple == "" then SD.pitagora_triple = "3-4-5" end
 if SD.morse_text == "" then SD.morse_text = "Welcome to Antisample Shredder" end
@@ -1563,6 +1613,7 @@ local Shredder_volume = tonumber(reaper.GetExtState(EXT_SECTION, KEYS.Shredder_V
 local Shredder_reverse = tonumber(reaper.GetExtState(EXT_SECTION, KEYS.Shredder_REVERSE)) or 0
 local Shredder_repeat = tonumber(reaper.GetExtState(EXT_SECTION, KEYS.Shredder_REPEAT)) or 0
 local Shredder_mute = tonumber(reaper.GetExtState(EXT_SECTION, KEYS.Shredder_MUTE)) or 0
+local Shredder_stretch = tonumber(reaper.GetExtState(EXT_SECTION, KEYS.Shredder_STRETCH)) or 0
 
 -- Applies one preset value to whichever standalone (non-SD) local
 -- variable it belongs to - defined here, after all of them exist, so
@@ -1601,6 +1652,7 @@ local function shredder_apply_preset_value_to_local(key, raw_value)
   elseif key == KEYS.Shredder_REVERSE then Shredder_reverse = as_num(Shredder_reverse)
   elseif key == KEYS.Shredder_REPEAT then Shredder_repeat = as_num(Shredder_repeat)
   elseif key == KEYS.Shredder_MUTE then Shredder_mute = as_num(Shredder_mute)
+  elseif key == KEYS.Shredder_STRETCH then Shredder_stretch = as_num(Shredder_stretch)
   end
 end
 
@@ -1643,6 +1695,7 @@ local function shredder_load_preset(name)
 
   SD.preset_name = name
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PRESET_NAME, name, true)
+  shredder_snapshot_preset_baseline()
   return true
 end
 
@@ -2168,6 +2221,8 @@ local function shredder_init_everything()
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_REVERSE, "0", true)
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_REPEAT, "0", true)
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_MUTE, "0", true)
+  Shredder_stretch = 0
+  reaper.SetExtState(EXT_SECTION, KEYS.Shredder_STRETCH, "0", true)
 
   -- "full" here, NOT "" - the dropdown's "Full Shuffle" entry has an
   -- explicit literal value ("full"), unlike sequence_type/scale_type
@@ -2251,10 +2306,20 @@ local function shredder_init_everything()
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PAN_DIRECTION, "both", true)
   SD.volume_direction = "both"
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_VOLUME_DIRECTION, "both", true)
+  SD.stretch_direction = "both"
+  reaper.SetExtState(EXT_SECTION, KEYS.Shredder_STRETCH_DIRECTION, "both", true)
   SD.scatter_repeats = false
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_SCATTER_REPEATS, "0", true)
   SD.cut_length_fixed = false
   reaper.SetExtState(EXT_SECTION, KEYS.Shredder_CUT_LENGTH_FIXED, "0", true)
+  SD.pitch_mode = -1
+  reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE, "-1", true)
+  SD.pitch_mode_random = false
+  reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE_RANDOM, "0", true)
+
+  SD.preset_name = "Init"
+  reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PRESET_NAME, SD.preset_name, true)
+  shredder_snapshot_preset_baseline()
 
   set_status("Init: every Shredder setting reset to default.", false)
 end
@@ -2283,6 +2348,38 @@ end
 -- sites need to change - only this function's body did.
 local function shredder_slider_label(text, value, min_val, max_val)
   reaper.ImGui_Text(ctx, text)
+end
+
+-- Pitch shift / time stretch modes as REAPER itself reports them (so
+-- the list always matches this install - elastique, Rubber Band, etc.),
+-- enumerated once and cached. Each entry: id (shifter index, the high
+-- 16 bits of I_PITCHMODE), name, subs (submode names), sub_items (the
+-- "\0"-joined Combo string for those submodes).
+local shredder_pitch_modes_cache = nil
+local function shredder_get_pitch_modes()
+  if shredder_pitch_modes_cache then return shredder_pitch_modes_cache end
+  local list = {}
+  if reaper.EnumPitchShiftModes then
+    for i = 0, 255 do
+      local ok, name = reaper.EnumPitchShiftModes(i)
+      if not ok then break end
+      if name and name ~= "" then
+        local subs = {}
+        if reaper.EnumPitchShiftSubModes then
+          for s = 0, 4095 do
+            local sub = reaper.EnumPitchShiftSubModes(i, s)
+            if not sub or sub == "" then break end
+            subs[#subs + 1] = sub
+          end
+        end
+        list[#list + 1] = { id = i, name = name, subs = subs, sub_items = table.concat(subs, "\0") .. "\0" }
+      end
+    end
+  end
+  local names = { "Project default" }
+  for _, m in ipairs(list) do names[#names + 1] = m.name end
+  shredder_pitch_modes_cache = { list = list, items = table.concat(names, "\0") .. "\0" }
+  return shredder_pitch_modes_cache
 end
 
 local function shredder_direction_buttons(sd_field, ext_key, label_text, value, min_val, max_val)
@@ -2389,8 +2486,9 @@ local function draw()
         do
           local btn_w = 64
           local gap = 6
+          local star_gap, star_w = 4, 14
           local avail_w = reaper.ImGui_GetContentRegionAvail(ctx)
-          local field_w = avail_w - (btn_w * 3 + gap * 3)
+          local field_w = avail_w - (btn_w * 3 + gap * 2 + star_gap + star_w)
           if field_w < 80 then field_w = 80 end
 
           reaper.ImGui_SetNextItemWidth(ctx, field_w)
@@ -2400,7 +2498,21 @@ local function draw()
             reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PRESET_NAME, SD.preset_name, true)
           end
 
-          reaper.ImGui_SameLine(ctx, 0, gap)
+          -- "*" = settings changed since this preset was loaded/saved/
+          -- Init'd. Fixed-width slot so the buttons don't shift when it
+          -- appears.
+          reaper.ImGui_SameLine(ctx, 0, star_gap)
+          local star_x = reaper.ImGui_GetCursorPosX(ctx)
+          if shredder_preset_is_dirty() then
+            reaper.ImGui_Text(ctx, "*")
+            if reaper.ImGui_IsItemHovered(ctx) then
+              reaper.ImGui_SetTooltip(ctx, "Edited - settings differ from the saved preset. Save to keep them.")
+            end
+          else
+            reaper.ImGui_Dummy(ctx, 1, 1)
+          end
+
+          reaper.ImGui_SameLine(ctx, star_x + star_w)
           if reaper.ImGui_Button(ctx, "Save", btn_w, 0) then
             local sanitized = shredder_sanitize_preset_name(SD.preset_name)
             local already_exists = false
@@ -2421,6 +2533,7 @@ local function draw()
 
             if proceed then
               if shredder_save_preset(SD.preset_name) then
+                shredder_snapshot_preset_baseline()
                 set_status((already_exists and "Overwrote preset: " or "Saved preset: ") .. sanitized, false)
               else
                 set_status("Couldn't save preset - check file permissions.", true)
@@ -2500,6 +2613,10 @@ local function draw()
             if SD.rand_include_mute then
               Shredder_mute = math.random(0, 100)
               reaper.SetExtState(EXT_SECTION, KEYS.Shredder_MUTE, tostring(Shredder_mute), true)
+            end
+            if SD.rand_include_stretch then
+              Shredder_stretch = math.random(0, 1000)
+              reaper.SetExtState(EXT_SECTION, KEYS.Shredder_STRETCH, tostring(Shredder_stretch), true)
             end
           end
           if reaper.ImGui_IsItemHovered(ctx) then
@@ -2745,9 +2862,10 @@ local function draw()
 
           shredder_help_text(
             ctx,
-            "Cuts at detected transients (a simple rising-edge energy detector) rather than fixed " ..
-            "length/count/grid positions - lower sensitivity means more (and smaller) cuts. Works " ..
-            "best on percussive/transient-rich material."
+            "Cuts right before each detected transient, snapped to a zero crossing. Detection " ..
+            "listens to lows, highs, and the full signal separately and adapts to the " ..
+            "material's own level, so quiet takes and hi-hats over bass still get caught. " ..
+            "Lower sensitivity = more (and smaller) cuts."
           )
         elseif Shredder_cut_mode == "blackhole" then
           local bh_start_ms = math.floor(SD.blackhole_start * 1000 + 0.5)
@@ -3126,6 +3244,15 @@ local function draw()
         shredder_direction_buttons("volume_direction", KEYS.Shredder_VOLUME_DIRECTION, "Volume (dB)",
           Shredder_volume, 0.0, 6.0)
 
+        reaper.ImGui_SetNextItemWidth(ctx, reaper.ImGui_GetContentRegionAvail(ctx) - DIR_RESERVE_W)
+        local stretch_changed, new_stretch = reaper.ImGui_SliderInt(ctx, "##stretch_pct", Shredder_stretch, 0, 1000)
+        if stretch_changed then
+          Shredder_stretch = new_stretch
+          reaper.SetExtState(EXT_SECTION, KEYS.Shredder_STRETCH, tostring(Shredder_stretch), true)
+        end
+        shredder_direction_buttons("stretch_direction", KEYS.Shredder_STRETCH_DIRECTION, "Stretch (%)",
+          Shredder_stretch, 0, 1000)
+
                 reaper.ImGui_SetNextItemWidth(ctx, reaper.ImGui_GetContentRegionAvail(ctx) - DIR_RESERVE_W)
         local pitch_changed, new_pitch = reaper.ImGui_SliderDouble(
           ctx, "##pitch_st", Shredder_pitch, 0.0, 24.0, "%.1f")
@@ -3304,6 +3431,13 @@ local function draw()
 
       if reaper.ImGui_BeginTabItem(ctx, "Settings") then
 
+        -- Same own-scroll-region setup as the Shredder tab, so the
+        -- status bar below the tab bar stays pinned to the bottom
+        -- instead of scrolling away with the settings.
+        local SETTINGS_STATUS_BAR_RESERVE_H = 40 -- keep in sync with the Shredder tab's STATUS_BAR_RESERVE_H
+        local settings_scroll_visible = reaper.ImGui_BeginChild(ctx, "settings_scroll", 0, -SETTINGS_STATUS_BAR_RESERVE_H)
+        if settings_scroll_visible then
+
         reaper.ImGui_Spacing(ctx)
         --reaper.ImGui_Indent(ctx)
 
@@ -3312,29 +3446,15 @@ local function draw()
         reaper.ImGui_Spacing(ctx)
 
         reaper.ImGui_PushFont(ctx, current_font, font_size + 3)
-        reaper.ImGui_SetNextItemOpen(ctx, true, reaper.ImGui_Cond_FirstUseEver())
+        reaper.ImGui_SetNextItemOpen(ctx, false, reaper.ImGui_Cond_FirstUseEver())
         local appearance_open = reaper.ImGui_CollapsingHeader(ctx, "Appearance")
         reaper.ImGui_PopFont(ctx)
         if appearance_open then
         reaper.ImGui_Spacing(ctx)
+        reaper.ImGui_Indent(ctx)
 
-        local font_changed, new_font_size = reaper.ImGui_InputInt(
-          ctx,
-          "Font size",
-          font_size,
-          1,
-          1
-        )
-
-        if font_changed then
-          set_font_size(new_font_size)
-        end
-
-        reaper.ImGui_Spacing(ctx)
-        reaper.ImGui_Separator(ctx)
-        reaper.ImGui_Spacing(ctx)
-
-        reaper.ImGui_Text(ctx, "Color Palette")
+        reaper.ImGui_SetNextItemOpen(ctx, false, reaper.ImGui_Cond_FirstUseEver())
+        if reaper.ImGui_CollapsingHeader(ctx, "Color Palette") then
         reaper.ImGui_Spacing(ctx)
         reaper.ImGui_TextWrapped(
           ctx, "One click changes background, buttons, text, and every other color at once.")
@@ -3377,10 +3497,10 @@ local function draw()
         end
 
         reaper.ImGui_Spacing(ctx)
-        reaper.ImGui_Separator(ctx)
-        reaper.ImGui_Spacing(ctx)
+        end -- Color Palette
 
-        reaper.ImGui_Text(ctx, "Font Color")
+        reaper.ImGui_SetNextItemOpen(ctx, false, reaper.ImGui_Cond_FirstUseEver())
+        if reaper.ImGui_CollapsingHeader(ctx, "Font and Font Color") then
         reaper.ImGui_Spacing(ctx)
         reaper.ImGui_TextWrapped(
           ctx, "Independent of the palette above - pick a text color separately and it stays " ..
@@ -3411,10 +3531,27 @@ local function draw()
         end
 
         reaper.ImGui_Spacing(ctx)
-        reaper.ImGui_Separator(ctx)
-        reaper.ImGui_Spacing(ctx)
+        reaper.ImGui_Dummy(ctx, 0, 4)
 
-        reaper.ImGui_Text(ctx, "Layout")
+        local font_changed, new_font_size = reaper.ImGui_InputInt(
+          ctx,
+          "Font size",
+          font_size,
+          1,
+          1
+        )
+
+        if font_changed then
+          set_font_size(new_font_size)
+        end
+        reaper.ImGui_Dummy(ctx, 0, 4)
+
+        reaper.ImGui_Spacing(ctx)
+        end -- Font and Font Color
+
+        reaper.ImGui_SetNextItemOpen(ctx, false, reaper.ImGui_Cond_FirstUseEver())
+        if reaper.ImGui_CollapsingHeader(ctx, "Layout") then
+        reaper.ImGui_Spacing(ctx)
         reaper.ImGui_TextWrapped(
           ctx,
           "How the Shredder tab lays itself out - useful once it's docked narrow or the " ..
@@ -3423,6 +3560,7 @@ local function draw()
         reaper.ImGui_Spacing(ctx)
 
         reaper.ImGui_Text(ctx, "Run Shredder button position")
+        reaper.ImGui_Dummy(ctx, 0, 4)
         do
           local col_w2 = 110
           local active_top = (SD.pin_position == "top")
@@ -3450,6 +3588,7 @@ local function draw()
           end
           if active_bottom then reaper.ImGui_PopStyleColor(ctx, 3) end
         end
+        reaper.ImGui_Dummy(ctx, 0, 4)
         reaper.ImGui_TextWrapped(
           ctx,
           "Everything else in the Shredder tab scrolls in its own region, so however far " ..
@@ -3469,6 +3608,10 @@ local function draw()
           "for a narrow dock or a small window."
         )
 
+        reaper.ImGui_Spacing(ctx)
+        end -- Layout
+
+        reaper.ImGui_Unindent(ctx)
         end -- if appearance_open
 
         reaper.ImGui_Spacing(ctx)
@@ -3476,13 +3619,33 @@ local function draw()
         reaper.ImGui_Spacing(ctx)
 
         reaper.ImGui_PushFont(ctx, current_font, font_size + 3)
-        reaper.ImGui_SetNextItemOpen(ctx, true, reaper.ImGui_Cond_FirstUseEver())
+        reaper.ImGui_SetNextItemOpen(ctx, false, reaper.ImGui_Cond_FirstUseEver())
         local behavior_open = reaper.ImGui_CollapsingHeader(ctx, "Shredder Behaviour")
         reaper.ImGui_PopFont(ctx)
         if behavior_open then
         reaper.ImGui_Spacing(ctx)
 
         reaper.ImGui_Text(ctx, "Cut Variance")
+        reaper.ImGui_SameLine(ctx)
+        reaper.ImGui_Text(ctx, "(?)")
+        if reaper.ImGui_IsItemHovered(ctx) then
+          reaper.ImGui_SetTooltip(
+            ctx,
+            "Affects By Cut Length AND By Number of Cuts (Shredder tab, Classic column) - one \n" ..
+            "switch for both, not two. Randomized (default): By Cut Length's segments are \n" ..
+            "+/-50% around its slider's value (a 500ms setting actually produces 250-750ms \n" ..
+            "segments); By Number of Cuts' actual count is +/-20% around its slider's value \n" ..
+            "(a setting of 2 can genuinely produce 1-3 cuts, i.e. 2-4 segments) - same as it's \n" ..
+            "always been for both. Fixed: By Cut Length's segments are exactly its slider's \n" ..
+            "value; By Number of Cuts produces exactly that many cuts, every time - no \n" ..
+            "randomization of size or count either way. The last segment in an item can still \n" ..
+            "come out shorter regardless of this setting, the same way it does for every other \n" ..
+            "Cut Mode, since there's always some leftover unless the item's length divides \n" ..
+            "evenly - and By Number of Cuts' individual cut POSITIONS stay randomly scattered \n" ..
+            "even when Fixed, since Fixed only locks the count, not where the cuts land."
+          )
+        end
+        reaper.ImGui_Dummy(ctx, 0, 4)
         do
           local col_w3 = 130
           local active_rand = not SD.cut_length_fixed
@@ -3510,21 +3673,92 @@ local function draw()
           end
           if active_fixed then reaper.ImGui_PopStyleColor(ctx, 3) end
         end
-        reaper.ImGui_TextWrapped(
-          ctx,
-          "Affects By Cut Length AND By Number of Cuts (Shredder tab, Classic column) - one " ..
-          "switch for both, not two. Randomized (default): By Cut Length's segments are " ..
-          "+/-50% around its slider's value (a 500ms setting actually produces 250-750ms " ..
-          "segments); By Number of Cuts' actual count is +/-20% around its slider's value " ..
-          "(a setting of 2 can genuinely produce 1-3 cuts, i.e. 2-4 segments) - same as it's " ..
-          "always been for both. Fixed: By Cut Length's segments are exactly its slider's " ..
-          "value; By Number of Cuts produces exactly that many cuts, every time - no " ..
-          "randomization of size or count either way. The last segment in an item can still " ..
-          "come out shorter regardless of this setting, the same way it does for every other " ..
-          "Cut Mode, since there's always some leftover unless the item's length divides " ..
-          "evenly - and By Number of Cuts' individual cut POSITIONS stay randomly scattered " ..
-          "even when Fixed, since Fixed only locks the count, not where the cuts land."
-        )
+        reaper.ImGui_Dummy(ctx, 0, 4)
+
+        reaper.ImGui_Spacing(ctx)
+        reaper.ImGui_Separator(ctx)
+        reaper.ImGui_Spacing(ctx)
+
+        reaper.ImGui_Text(ctx, "Take Pitch Shift / Time Stretch Mode")
+        reaper.ImGui_SameLine(ctx)
+        reaper.ImGui_Text(ctx, "(?)")
+        if reaper.ImGui_IsItemHovered(ctx) then
+          reaper.ImGui_SetTooltip(
+            ctx,
+            "The pitch shift / time stretch algorithm set on every chunk Shredder produces - \n" ..
+            "affects how Stretch, Pitch, and Rate sound. The list comes straight from REAPER, \n" ..
+            "so it matches whatever modes this install supports. Project default leaves each \n" ..
+            "chunk on whatever the project is set to.\n\n" ..
+            "Fixed: every chunk uses the mode picked in the dropdown (Project default unless \n" ..
+            "you choose otherwise). Randomized: each chunk independently picks one of Project \n" ..
+            "default, elastique 3 Pro, Rrreeeaaa, or ReaReaRea (any this REAPER version \n" ..
+            "doesn't have is skipped)."
+          )
+        end
+        reaper.ImGui_Dummy(ctx, 0, 4)
+        do
+          local col_w4 = 130
+          local active_pm_fixed = not SD.pitch_mode_random
+          if active_pm_fixed then
+            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), THEME_ORANGE_ACTIVE)
+            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), THEME_ORANGE_ACTIVE)
+            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), THEME_ORANGE_ACTIVE)
+          end
+          if reaper.ImGui_Button(ctx, "Fixed##pitch_mode_fixed", col_w4, 0) then
+            SD.pitch_mode_random = false
+            reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE_RANDOM, "0", true)
+          end
+          if active_pm_fixed then reaper.ImGui_PopStyleColor(ctx, 3) end
+
+          reaper.ImGui_SameLine(ctx, 0, 6)
+          local active_pm_rand = SD.pitch_mode_random
+          if active_pm_rand then
+            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), THEME_ORANGE_ACTIVE)
+            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), THEME_ORANGE_ACTIVE)
+            reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), THEME_ORANGE_ACTIVE)
+          end
+          if reaper.ImGui_Button(ctx, "Randomized##pitch_mode_random", col_w4, 0) then
+            SD.pitch_mode_random = true
+            reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE_RANDOM, "1", true)
+          end
+          if active_pm_rand then reaper.ImGui_PopStyleColor(ctx, 3) end
+        end
+        reaper.ImGui_Dummy(ctx, 0, 4)
+        if SD.pitch_mode_random then
+          reaper.ImGui_TextColored(ctx, THEME_TEXT_DISABLED,
+            "Per chunk: Project default / elastique 3 Pro / Rrreeeaaa / ReaReaRea")
+        else
+        do
+          local pm = shredder_get_pitch_modes()
+          local cur_shifter = SD.pitch_mode >= 0 and math.floor(SD.pitch_mode / 65536) or -1
+          local cur_sub = SD.pitch_mode >= 0 and (SD.pitch_mode % 65536) or 0
+
+          local mode_idx, entry = 0, nil
+          for k, m in ipairs(pm.list) do
+            if m.id == cur_shifter then mode_idx, entry = k, m end
+          end
+
+          reaper.ImGui_SetNextItemWidth(ctx, 280)
+          local mode_changed, new_mode_idx = reaper.ImGui_Combo(ctx, "Mode##shredder_pitch_mode", mode_idx, pm.items)
+          if mode_changed then
+            entry = pm.list[new_mode_idx]
+            cur_sub = 0
+            SD.pitch_mode = entry and entry.id * 65536 or -1
+            reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE, tostring(SD.pitch_mode), true)
+          end
+
+          if entry and #entry.subs > 0 then
+            if cur_sub >= #entry.subs then cur_sub = 0 end
+            reaper.ImGui_SetNextItemWidth(ctx, 280)
+            local sub_changed, new_sub = reaper.ImGui_Combo(ctx, "Submode##shredder_pitch_submode", cur_sub, entry.sub_items)
+            if sub_changed then
+              SD.pitch_mode = entry.id * 65536 + new_sub
+              reaper.SetExtState(EXT_SECTION, KEYS.Shredder_PITCH_MODE, tostring(SD.pitch_mode), true)
+            end
+          end
+        end
+        end -- if SD.pitch_mode_random
+        reaper.ImGui_Dummy(ctx, 0, 4)
 
         reaper.ImGui_Spacing(ctx)
         reaper.ImGui_Separator(ctx)
@@ -3536,12 +3770,16 @@ local function draw()
           SD.cut_only = new_cutonly
           reaper.SetExtState(EXT_SECTION, KEYS.Shredder_CUT_ONLY, SD.cut_only and "1" or "0", true)
         end
-        reaper.ImGui_TextWrapped(
-          ctx,
-          "Run Shredder cuts, shuffles, and randomizes exactly as normal, but stops short of " ..
-          "the final glue - instead the resulting segments are selected and grouped, and the " ..
-          "edit cursor moves to the start of the selection. On by default."
-        )
+        reaper.ImGui_SameLine(ctx)
+        reaper.ImGui_Text(ctx, "(?)")
+        if reaper.ImGui_IsItemHovered(ctx) then
+          reaper.ImGui_SetTooltip(
+            ctx,
+            "Run Shredder cuts, shuffles, and randomizes exactly as normal, but stops short of \n" ..
+            "the final glue - instead the resulting segments are selected and grouped, and the \n" ..
+            "edit cursor moves to the start of the selection. On by default."
+          )
+        end
 
         reaper.ImGui_Spacing(ctx)
 
@@ -3551,11 +3789,15 @@ local function draw()
           SD.hide_help_text = new_hidehelp
           reaper.SetExtState(EXT_SECTION, KEYS.Shredder_HIDE_HELP_TEXT, SD.hide_help_text and "1" or "0", true)
         end
-        reaper.ImGui_TextWrapped(
-          ctx,
-          "Hides the explanatory paragraphs throughout the Shredder tab - control names, " ..
-          "sliders, and values stay exactly as they are, only the descriptive prose is hidden."
-        )
+        reaper.ImGui_SameLine(ctx)
+        reaper.ImGui_Text(ctx, "(?)")
+        if reaper.ImGui_IsItemHovered(ctx) then
+          reaper.ImGui_SetTooltip(
+            ctx,
+            "Hides the explanatory paragraphs throughout the Shredder tab - control names, \n" ..
+            "sliders, and values stay exactly as they are, only the descriptive prose is hidden."
+          )
+        end
 
         end -- if behavior_open
 
@@ -3563,7 +3805,12 @@ local function draw()
         reaper.ImGui_Separator(ctx)
         reaper.ImGui_Spacing(ctx)
 
-        reaper.ImGui_Text(ctx, "Randomization Settings")
+        reaper.ImGui_PushFont(ctx, current_font, font_size + 3)
+        reaper.ImGui_SetNextItemOpen(ctx, false, reaper.ImGui_Cond_FirstUseEver())
+        local randset_open = reaper.ImGui_CollapsingHeader(ctx, "Randomization Settings")
+        reaper.ImGui_PopFont(ctx)
+        if randset_open then
+        reaper.ImGui_Spacing(ctx)
         reaper.ImGui_TextWrapped(
           ctx,
           "Which Per-Segment Randomization properties the Random button (Shredder tab) is " ..
@@ -3594,13 +3841,21 @@ local function draw()
           rand_include_checkbox("Reverse", "rand_include_reverse", KEYS.Shredder_RAND_INCLUDE_REVERSE, 2)
           rand_include_checkbox("Repeat", "rand_include_repeat", KEYS.Shredder_RAND_INCLUDE_REPEAT, 1)
           rand_include_checkbox("Mute", "rand_include_mute", KEYS.Shredder_RAND_INCLUDE_MUTE, 2)
+          rand_include_checkbox("Stretch", "rand_include_stretch", KEYS.Shredder_RAND_INCLUDE_STRETCH, 1)
         end
+
+        end -- if randset_open
 
         reaper.ImGui_Spacing(ctx)
         reaper.ImGui_Separator(ctx)
         reaper.ImGui_Spacing(ctx)
 
-        reaper.ImGui_Text(ctx, "Render Settings")
+        reaper.ImGui_PushFont(ctx, current_font, font_size + 3)
+        reaper.ImGui_SetNextItemOpen(ctx, false, reaper.ImGui_Cond_FirstUseEver())
+        local render_open = reaper.ImGui_CollapsingHeader(ctx, "Render Settings")
+        reaper.ImGui_PopFont(ctx)
+        if render_open then
+        reaper.ImGui_Spacing(ctx)
         reaper.ImGui_TextWrapped(
           ctx,
           "Naming pattern for the glued result (only applies when Cut Only, in the Shredder " ..
@@ -3647,8 +3902,14 @@ local function draw()
 
           reaper.ImGui_TextColored(ctx, THEME_TEXT_DISABLED, "Preview: " .. preview)
         end
+        reaper.ImGui_Dummy(ctx, 0, 8)
+
+        end -- if render_open
 
         --reaper.ImGui_Unindent(ctx)
+
+        reaper.ImGui_EndChild(ctx)
+        end -- if settings_scroll_visible
 
         reaper.ImGui_EndTabItem(ctx)
       end

@@ -113,16 +113,15 @@
        - FIB_DESCENDING: shrinking (true) vs growing (false) segments.
          ExtState "ShredderFibDescending".
 
-  6) ONSET-DETECTION CUTTING: CUT_MODE = "onset". A lightweight
-     energy-based transient detector - reads the item's audio via a
-     take audio accessor, computes a short-window peak envelope, and
-     cuts wherever the envelope jumps by more than
-     ONSET_SENSITIVITY_PERCENT (relative rise) from one window to the
-     next, enforcing MIN_SEGMENT_LEN as a refractory period so one
-     transient's decay doesn't get chopped into pieces. This is a
-     simple heuristic (rising-edge detector), not a full spectral-flux
-     onset detector - works well on percussive/transient material,
-     less well on smooth/legato sources.
+  6) ONSET-DETECTION CUTTING: CUT_MODE = "onset". A multi-band
+     transient detector - reads the item's audio via a take audio
+     accessor at 22.05kHz, tracks level in low/high/full bands, and
+     cuts where the combined dB rise clearly beats the local average
+     (adaptive, level-independent). Each cut is placed sample-
+     accurately just before its attack and snapped to a zero crossing;
+     hits closer than 25ms (or MIN_SEGMENT_LEN, if larger) merge into
+     the stronger one. Still best on percussive material - smooth
+     legato sources have few real transients to find.
        - ONSET_SENSITIVITY_PERCENT (5-100): lower = more (and more
          sensitive) cuts. ExtState "ShredderOnsetSensitivity".
 
@@ -722,12 +721,18 @@ local MORSE_TABLE = {
   ["."] = ".-.-.-", [","] = "--..--", ["?"] = "..--..",
 }
 
--- "onset" mode settings (V3): ONSET_SENSITIVITY_PERCENT is the
--- relative-rise threshold (as a fraction of full-scale amplitude) that
--- triggers a cut - see generate_cut_positions_by_onset() below.
+-- "onset" mode settings: ONSET_SENSITIVITY_PERCENT (5-100) sets how
+-- big a level jump (in dB, above the local average) counts as a
+-- transient - lower = more cuts. See generate_cut_positions_by_onset().
 local ONSET_SENSITIVITY_PERCENT = tonumber(reaper.GetExtState(EXT_SECTION, "ShredderOnsetSensitivity")) or 30
-local ONSET_ANALYSIS_RATE = 4000 -- Hz, downsampled envelope-read rate
-local ONSET_WINDOW_SEC = 0.01 -- 10ms analysis windows
+local ONSET_ANALYSIS_RATE = 22050 -- Hz, high enough to see hi-hat/click energy
+local ONSET_HOP = 128 -- samples per analysis frame (~5.8ms at 22.05kHz)
+local ONSET_LOW_HZ = 150 -- low band (kicks/bass) = below this
+local ONSET_HIGH_HZ = 4000 -- high band (hats/clicks/consonants) = above this
+local ONSET_GATE_DB = 50 -- frames this far below the item's loudest frame are ignored
+local ONSET_AVG_SEC = 0.15 -- adaptive-threshold averaging half-window
+local ONSET_MIN_GAP_SEC = 0.025 -- two transients closer than this merge into the stronger one
+local ONSET_PREROLL_SEC = 0.001 -- cut lands this far before the detected attack
 
 -- Minimum Chunk Length (v1.12): the floor used everywhere a segment
 -- could otherwise get vanishingly small - most consequential for the
@@ -853,6 +858,50 @@ if not valid_direction(POSITION_DIRECTION) then POSITION_DIRECTION = "both" end
 if not valid_direction(PITCH_DIRECTION) then PITCH_DIRECTION = "both" end
 if not valid_direction(PAN_DIRECTION) then PAN_DIRECTION = "both" end
 if not valid_direction(VOLUME_DIRECTION) then VOLUME_DIRECTION = "both" end
+
+-- Stretch (0-1000%): each segment gets a random time-stretch anywhere in
+-- [-magnitude, +magnitude]% (constrained by its own Direction), pitch
+-- preserved. +100% = twice as long, +1000% = 11x as long; negative
+-- values mirror that as a shrink (-100% = half length, -1000% = 1/11).
+-- 0 = no stretch. See apply_stretch() below.
+local STRETCH_INTENSITY = tonumber(reaper.GetExtState(EXT_SECTION, "ShredderStretch")) or 0
+local STRETCH_DIRECTION = reaper.GetExtState(EXT_SECTION, "ShredderStretchDirection")
+if not valid_direction(STRETCH_DIRECTION) then STRETCH_DIRECTION = "both" end
+
+-- Take pitch shift / time stretch mode applied to every segment, in
+-- REAPER's I_PITCHMODE encoding ((shifter << 16) | submode). -1 =
+-- leave each take on its own/the project default.
+local PITCH_MODE = math.floor(tonumber(reaper.GetExtState(EXT_SECTION, "ShredderPitchMode")) or -1)
+
+-- Randomized pitch mode: when on, each segment independently gets a
+-- random pick from PITCH_MODE_POOL instead of PITCH_MODE. The pool is
+-- resolved by name from whatever REAPER reports (so it survives mode
+-- indices differing between versions); any mode this install doesn't
+-- have is simply left out. -1 = project default.
+local PITCH_MODE_RANDOM = reaper.GetExtState(EXT_SECTION, "ShredderPitchModeRandom") == "1"
+
+local function find_pitch_shifter(matches)
+  if not reaper.EnumPitchShiftModes then return nil end
+  for i = 0, 255 do
+    local ok, name = reaper.EnumPitchShiftModes(i)
+    if not ok then break end
+    if name and name ~= "" and matches(name:lower()) then return i end
+  end
+  return nil
+end
+
+local PITCH_MODE_POOL = { -1 }
+if PITCH_MODE_RANDOM then
+  local wanted = {
+    function(n) return n:find("lastique 3", 1, true) and n:find("pro", 1, true) end, -- elastique 3 Pro
+    function(n) return n:find("rrreeeaaa", 1, true) end,
+    function(n) return n:find("rearearea", 1, true) end,
+  }
+  for _, matches in ipairs(wanted) do
+    local shifter = find_pitch_shifter(matches)
+    if shifter then table.insert(PITCH_MODE_POOL, shifter * 65536) end -- submode 0 = that mode's default
+  end
+end
 
 -- Chance (0-100%) that any given segment plays reversed. 0 = never,
 -- 100 = every segment reversed.
@@ -1310,15 +1359,14 @@ local function generate_cut_positions_by_sequence(item_pos, item_len)
   return positions
 end
 
--- "onset" mode (V3): a lightweight energy-based transient detector -
--- reads the item's own audio via a take audio accessor, computes a
--- short-window (ONSET_WINDOW_SEC) peak envelope, and cuts wherever the
--- envelope rises by more than ONSET_SENSITIVITY_PERCENT (as a fraction
--- of full-scale amplitude) from one window to the next, enforcing
--- MIN_SEGMENT_LEN as a refractory period so a single transient's decay
--- doesn't get chopped into pieces. A simple rising-edge heuristic, not
--- a full spectral-flux onset detector - works best on percussive/
--- transient-rich material.
+-- "onset" mode: a multi-band transient detector. Reads the item's own
+-- audio via a take audio accessor at 22.05kHz, measures per-frame
+-- level in low/high/full bands, and picks frames where the summed dB
+-- rise clearly beats the local average (adaptive threshold, level-
+-- independent). Each hit is then placed sample-accurately just before
+-- its attack, snapped to a zero crossing. Hits closer than
+-- ONSET_MIN_GAP_SEC (or MIN_SEGMENT_LEN, if larger) merge into the
+-- stronger one.
 local function generate_cut_positions_by_onset(item, item_pos, item_len)
   if item_len < MIN_SEGMENT_LEN * 2 then return {} end
 
@@ -1328,38 +1376,175 @@ local function generate_cut_positions_by_onset(item, item_pos, item_len)
   local accessor = reaper.CreateTakeAudioAccessor(take)
   if not accessor then return {} end
 
-  local window_samples = math.max(1, math.floor(ONSET_ANALYSIS_RATE * ONSET_WINDOW_SEC))
-  local num_windows = math.max(1, math.floor(item_len / ONSET_WINDOW_SEC))
-  local buf = reaper.new_array(window_samples * 2)
+  local rate, hop = ONSET_ANALYSIS_RATE, ONSET_HOP
+  local num_frames = math.floor(item_len * rate / hop)
+  if num_frames < 5 then
+    reaper.DestroyAudioAccessor(accessor)
+    return {}
+  end
 
-  local envelope = {}
-  for w = 0, num_windows - 1 do
+  -- Pass 1: per-frame level (dB) in three bands - low (one-pole LP),
+  -- high (input minus a one-pole LP), and full band. Tracking bands
+  -- separately means a hi-hat over a sustained bass note still shows
+  -- up as a clear jump in the high band, even when the full-band level
+  -- barely moves.
+  local LN10 = math.log(10)
+  local function to_db(e) return 10 * math.log(e + 1e-12) / LN10 end
+
+  local a_low = math.exp(-2 * math.pi * ONSET_LOW_HZ / rate)
+  local a_high = math.exp(-2 * math.pi * ONSET_HIGH_HZ / rate)
+  local lp_low, lp_high = 0, 0
+
+  local low_db, high_db, full_db = {}, {}, {}
+  local peak_db = -math.huge
+  local block_frames = 256
+  local buf = reaper.new_array(block_frames * hop * 2)
+
+  local frame = 0
+  while frame < num_frames do
+    local nf = math.min(block_frames, num_frames - frame)
     buf.clear()
-    reaper.GetAudioAccessorSamples(accessor, ONSET_ANALYSIS_RATE, 2, w * ONSET_WINDOW_SEC, window_samples, buf)
-    local peak = 0
-    for i = 0, window_samples - 1 do
-      local l = buf[i * 2 + 1] or 0
-      local r = buf[i * 2 + 2] or 0
-      local v = math.max(math.abs(l), math.abs(r))
-      if v > peak then peak = v end
+    reaper.GetAudioAccessorSamples(accessor, rate, 2, frame * hop / rate, nf * hop, buf)
+    for f = 0, nf - 1 do
+      local e_low, e_high, e_full = 0, 0, 0
+      for i = f * hop, f * hop + hop - 1 do
+        local x = (buf[i * 2 + 1] + buf[i * 2 + 2]) * 0.5
+        lp_low = x + a_low * (lp_low - x)
+        lp_high = x + a_high * (lp_high - x)
+        local h = x - lp_high
+        e_low = e_low + lp_low * lp_low
+        e_high = e_high + h * h
+        e_full = e_full + x * x
+      end
+      local idx = frame + f + 1
+      low_db[idx] = to_db(e_low / hop)
+      high_db[idx] = to_db(e_high / hop)
+      full_db[idx] = to_db(e_full / hop)
+      if full_db[idx] > peak_db then peak_db = full_db[idx] end
     end
-    envelope[w + 1] = peak
+    frame = frame + nf
+  end
+
+  -- Pass 2: onset strength per frame = summed dB rise across the three
+  -- bands, measured against two frames back (so an attack that
+  -- straddles a frame boundary isn't split in half). Levels are
+  -- floored at the gate so rising out of near-silence doesn't count as
+  -- a 100dB jump, and frames below the gate are ignored entirely -
+  -- noise floors/reverb tails can't trigger cuts. Working in dB makes
+  -- the whole thing level-independent: a quiet take and a loud one
+  -- get the same cuts.
+  local gate = peak_db - ONSET_GATE_DB
+  local odf = {}
+  for n = 1, num_frames do
+    if n <= 2 or full_db[n] < gate then
+      odf[n] = 0
+    else
+      local s = 0
+      for _, band in ipairs({ low_db, high_db, full_db }) do
+        local rise = math.max(band[n], gate) - math.max(band[n - 2], gate)
+        if rise > 0 then s = s + rise end
+      end
+      odf[n] = s
+    end
+  end
+
+  -- Pass 3: adaptive peak-picking. A frame is a transient when it's a
+  -- local maximum (+/-2 frames) AND beats the local average (over
+  -- +/-ONSET_AVG_SEC) by the Sensitivity-derived margin - busy
+  -- passages need a bigger jump than sparse ones.
+  local delta = 3 + math.max(1, ONSET_SENSITIVITY_PERCENT) * 0.45 -- 5% ~ 5dB ... 100% ~ 48dB
+  local half_w = math.max(1, math.floor(ONSET_AVG_SEC * rate / hop))
+  local prefix = { [0] = 0 }
+  for n = 1, num_frames do prefix[n] = prefix[n - 1] + odf[n] end
+
+  local candidates = {}
+  for n = 3, num_frames - 2 do
+    local v = odf[n]
+    if v > 0 and v > odf[n - 1] and v >= odf[n + 1] and v >= odf[n - 2] and v >= odf[n + 2] then
+      local lo, hi = math.max(1, n - half_w), math.min(num_frames, n + half_w)
+      local mean = (prefix[hi] - prefix[lo - 1]) / (hi - lo + 1)
+      if v > mean + delta then
+        table.insert(candidates, { frame = n, strength = v })
+      end
+    end
+  end
+
+  -- Pass 4: sample-accurate placement. The frame grid is ~6ms coarse,
+  -- so re-read just the audio around each detected frame, find where
+  -- the attack actually starts rising out of whatever came before it,
+  -- back off a hair of pre-roll, and snap to the nearest preceding
+  -- zero crossing - cuts land just BEFORE the hit (never clipping its
+  -- front edge) and without clicks.
+  local region_len = hop * 4
+  local rbuf = reaper.new_array(region_len * 2)
+  local hold = math.max(1, math.floor(rate * 0.0005))
+  local preroll = math.floor(rate * ONSET_PREROLL_SEC)
+  local zc_search = math.floor(rate * 0.001)
+
+  local function refine(n)
+    local rstart = math.max(0, (n - 3) * hop)
+    rbuf.clear()
+    reaper.GetAudioAccessorSamples(accessor, rate, 2, rstart / rate, region_len, rbuf)
+
+    local x, env = {}, {}
+    for i = 0, region_len - 1 do
+      x[i] = (rbuf[i * 2 + 1] + rbuf[i * 2 + 2]) * 0.5
+    end
+    local p, peak = 0, 0
+    for i = 0, region_len - 1 do
+      local m = 0
+      for j = math.max(0, i - hold), i do
+        local a = math.abs(x[j])
+        if a > m then m = a end
+      end
+      env[i] = m
+      if m > peak then peak, p = m, i end
+    end
+
+    local baseline = peak
+    for i = 0, p do
+      if env[i] < baseline then baseline = env[i] end
+    end
+    if peak - baseline <= 1e-6 then return (n - 1) * hop / rate end
+
+    local thr = baseline + 0.1 * (peak - baseline)
+    local i = p
+    while i > 0 and env[i] > thr do i = i - 1 end
+    i = math.max(0, i - preroll)
+    for j = i, math.max(1, i - zc_search), -1 do
+      if (x[j] >= 0) ~= (x[j - 1] >= 0) then
+        i = j
+        break
+      end
+    end
+    return (rstart + i) / rate
+  end
+
+  local gap = math.max(MIN_SEGMENT_LEN, ONSET_MIN_GAP_SEC)
+  local picked = {}
+  for _, c in ipairs(candidates) do
+    local t = item_pos + refine(c.frame)
+    local last = picked[#picked]
+    if last and t - last.t < gap then
+      -- Too close to the previous one: keep whichever hit is stronger.
+      if c.strength > last.strength then
+        last.t, last.strength = t, c.strength
+      end
+    else
+      table.insert(picked, { t = t, strength = c.strength })
+    end
   end
   reaper.DestroyAudioAccessor(accessor)
 
-  local sensitivity = math.max(1, ONSET_SENSITIVITY_PERCENT) / 100
   local positions = {}
-  local last_cut_time = item_pos
-
-  for w = 2, #envelope do
-    local rise = envelope[w] - envelope[w - 1]
-    local t = item_pos + (w - 1) * ONSET_WINDOW_SEC
-    if rise > sensitivity and (t - last_cut_time) >= MIN_SEGMENT_LEN then
-      table.insert(positions, t)
-      last_cut_time = t
+  local lo_bound = item_pos + MIN_SEGMENT_LEN
+  local hi_bound = item_pos + item_len - MIN_SEGMENT_LEN
+  for _, pk in ipairs(picked) do
+    local prev = positions[#positions]
+    if pk.t >= lo_bound and pk.t <= hi_bound and (not prev or pk.t - prev >= MIN_SEGMENT_LEN) then
+      table.insert(positions, pk.t)
     end
   end
-
   return positions
 end
 
@@ -2018,18 +2203,80 @@ local function quantize_to_scale(pitch)
   return best
 end
 
+-- Per-segment stretch info, recorded by apply_stretch() so
+-- randomize_segment_properties() can fold the stretch into its own
+-- Rate/Pitch values instead of overwriting it: factor (length
+-- multiplier), base_rate/base_pitch (take values before stretching),
+-- resample (true if the take was NOT preserving pitch, i.e. its
+-- playrate used to shift pitch too).
+local stretch_info = {}
+
+local function semitones_for_rate(rate)
+  return 12 * math.log(rate) / math.log(2)
+end
+
+-- Writes a stretched segment's final playrate/pitch. Stretched takes
+-- always run with preserve-pitch on, so the stretch itself never
+-- changes pitch - and for takes that were NOT preserving pitch, the
+-- pitch shift their `rate` would have caused through resampling is
+-- added back explicitly, so Rate randomization keeps its usual
+-- pitch-shifting character.
+local function set_stretched_rate_pitch(take, info, rate, pitch)
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", rate / info.factor)
+  if info.resample then pitch = pitch + semitones_for_rate(rate) end
+  reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch)
+end
+
+-- Time-stretches each segment by a random amount up to
+-- STRETCH_INTENSITY% (constrained by Direction): length is multiplied
+-- by the factor and playrate divided by it, so the same slice of
+-- source audio just plays over a longer/shorter span, with pitch
+-- preserved. Must run BEFORE place_segments_sequentially() so the new
+-- lengths lay out gapless.
+local function apply_stretch(segments)
+  if STRETCH_INTENSITY <= 0 then return end
+  for _, seg in ipairs(segments) do
+    local take = reaper.GetActiveTake(seg)
+    if take then
+      local pct = directional_random(STRETCH_DIRECTION) * STRETCH_INTENSITY
+      local factor = pct >= 0 and (1 + pct / 100) or (1 / (1 - pct / 100))
+      local info = {
+        factor = factor,
+        base_rate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE"),
+        base_pitch = reaper.GetMediaItemTakeInfo_Value(take, "D_PITCH"),
+        resample = reaper.GetMediaItemTakeInfo_Value(take, "B_PPITCH") == 0,
+      }
+      stretch_info[seg] = info
+
+      local len = reaper.GetMediaItemInfo_Value(seg, "D_LENGTH")
+      reaper.SetMediaItemInfo_Value(seg, "D_LENGTH", len * factor)
+      reaper.SetMediaItemTakeInfo_Value(take, "B_PPITCH", 1)
+      set_stretched_rate_pitch(take, info, info.base_rate, info.base_pitch)
+    end
+  end
+end
+
 -- Randomizes one segment's take rate/pitch/pan/volume, each
 -- independently, based on the *_INTENSITY settings above, with the
 -- three fully-bipolar ones (Pitch/Pan/Volume) constrained by their own
 -- Direction setting. A zero (or, for rate, 1x) intensity leaves that
--- property untouched entirely.
+-- property untouched entirely. Also applies the chosen pitch shift /
+-- time stretch mode (PITCH_MODE), if one is set.
 local function randomize_segment_properties(seg)
   local take = reaper.GetActiveTake(seg)
   if not take then return end
 
+  if PITCH_MODE_RANDOM then
+    reaper.SetMediaItemTakeInfo_Value(take, "I_PITCHMODE", PITCH_MODE_POOL[math.random(#PITCH_MODE_POOL)])
+  elseif PITCH_MODE >= 0 then
+    reaper.SetMediaItemTakeInfo_Value(take, "I_PITCHMODE", PITCH_MODE)
+  end
+
+  local info = stretch_info[seg]
+  local rate, pitch
+
   if RATE_INTENSITY > 1 then
-    local rate = 1 + math.random() * (RATE_INTENSITY - 1)
-    reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", rate)
+    rate = 1 + math.random() * (RATE_INTENSITY - 1)
   end
 
   -- Pitch/Pan/Volume are fully bipolar: at intensity X (and Direction
@@ -2037,9 +2284,17 @@ local function randomize_segment_properties(seg)
   -- the slider's own sign doesn't matter, only its magnitude does.
   if PITCH_INTENSITY ~= 0 then
     local magnitude = math.abs(PITCH_INTENSITY)
-    local pitch = directional_random(PITCH_DIRECTION) * magnitude
+    pitch = directional_random(PITCH_DIRECTION) * magnitude
     if SCALE_QUANTIZE then pitch = quantize_to_scale(pitch) end
-    reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch)
+  end
+
+  if info then
+    if rate or pitch then
+      set_stretched_rate_pitch(take, info, rate or info.base_rate, pitch or info.base_pitch)
+    end
+  else
+    if rate then reaper.SetMediaItemTakeInfo_Value(take, "D_PLAYRATE", rate) end
+    if pitch then reaper.SetMediaItemTakeInfo_Value(take, "D_PITCH", pitch) end
   end
 
   if PAN_INTENSITY ~= 0 then
@@ -2171,6 +2426,7 @@ local function process_single_item(item)
   local order = ORDERED_SUBSET_MODE and segments or apply_shuffle_mode(segments)
   order = expand_with_repeats(order)
   order = apply_palindrome(order)
+  apply_stretch(order)
   place_segments_sequentially(order, item_pos)
 
   for _, seg in ipairs(order) do
@@ -2237,6 +2493,7 @@ local function process_mashup(items)
   local order = ORDERED_SUBSET_MODE and all_segments or apply_shuffle_mode(all_segments)
   order = expand_with_repeats(order)
   order = apply_palindrome(order)
+  apply_stretch(order)
   place_segments_sequentially(order, start_pos)
 
   for _, seg in ipairs(order) do
