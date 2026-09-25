@@ -859,12 +859,15 @@ if not valid_direction(PITCH_DIRECTION) then PITCH_DIRECTION = "both" end
 if not valid_direction(PAN_DIRECTION) then PAN_DIRECTION = "both" end
 if not valid_direction(VOLUME_DIRECTION) then VOLUME_DIRECTION = "both" end
 
--- Stretch (0-1000%): each segment gets a random time-stretch anywhere in
+-- Stretch (0-1000%, or 0-3000% with Extreme stretch on in Settings):
+-- each segment gets a random time-stretch anywhere in
 -- [-magnitude, +magnitude]% (constrained by its own Direction), pitch
--- preserved. +100% = twice as long, +1000% = 11x as long; negative
--- values mirror that as a shrink (-100% = half length, -1000% = 1/11).
+-- preserved. +100% = twice as long, +3000% = 31x as long; negative
+-- values mirror that as a shrink (-100% = half length, -3000% = 1/31).
 -- 0 = no stretch. See apply_stretch() below.
 local STRETCH_INTENSITY = tonumber(reaper.GetExtState(EXT_SECTION, "ShredderStretch")) or 0
+local EXTREME_STRETCH = reaper.GetExtState(EXT_SECTION, "ShredderExtremeStretch") == "1"
+STRETCH_INTENSITY = math.min(STRETCH_INTENSITY, EXTREME_STRETCH and 3000 or 1000)
 local STRETCH_DIRECTION = reaper.GetExtState(EXT_SECTION, "ShredderStretchDirection")
 if not valid_direction(STRETCH_DIRECTION) then STRETCH_DIRECTION = "both" end
 
@@ -878,7 +881,7 @@ local PITCH_MODE = math.floor(tonumber(reaper.GetExtState(EXT_SECTION, "Shredder
 -- resolved by name from whatever REAPER reports (so it survives mode
 -- indices differing between versions); any mode this install doesn't
 -- have is simply left out. -1 = project default.
-local PITCH_MODE_RANDOM = reaper.GetExtState(EXT_SECTION, "ShredderPitchModeRandom") == "1"
+local PITCH_MODE_RANDOM = reaper.GetExtState(EXT_SECTION, "ShredderPitchModeRandom") ~= "0" -- default on
 
 local function find_pitch_shifter(matches)
   if not reaper.EnumPitchShiftModes then return nil end

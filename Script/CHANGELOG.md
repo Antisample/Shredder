@@ -3,6 +3,27 @@
 All notable changes to Antisample Shredder (`Antisample_Shredder_UI.lua` +
 `Antisample_Shredder_Engine.lua`) are documented here, newest first.
 
+## v1.50
+
+Engine + UI.
+
+**Stretch**
+- Default limit is back to 1000%. New "Extreme stretch (up to 3000%)" checkbox (Settings > Shredder Behaviour, off by default) raises it to 3000% (up to 31x longer / 1/31 as long). The slider's maximum and the Random button's range both follow the setting; turning it off pulls an over-limit value back to 1000%. The engine clamps to the same limit on every run, so a preset holding a larger value can't exceed 1000% while Extreme is off. A preference, not part of presets (`ShredderExtremeStretch`).
+- Take Pitch Shift / Time Stretch Mode now defaults to **Randomized** (per chunk: Project default / élastique 3 Pro / Rrreeeaaa / ReaReaRea) instead of Fixed - on a fresh install, after Init, and in the engine when nothing has been saved yet. An explicitly chosen Fixed is kept.
+- New "Show in Shredder tab" checkbox under the stretch mode controls in Settings: adds a collapsible "Stretch mode: <current mode>" line under the Stretch slider, which opens the same Fixed/Randomized and Mode/Submode controls. Both places edit the same setting (shared `shredder_pitch_mode_controls()`). Off by default, not part of presets (`ShredderShowStretchModes`).
+
+**Now, Put It Together...**
+- Mode (Mash Together / Process Individually) and Preview buttons now sit side by side in two equal columns, with shorter labels ("Mode: Mash Together", "Open Preview") and hover tooltips; their help texts are merged into one paragraph below.
+- Palindrome Mode, Ordered-Subset Mode, and Ignore Silence checkboxes are laid out in two columns, dropping to a single column automatically when the window is too narrow for them to fit.
+
+**Other UI**
+- Direction buttons (`<-` `<->` `->`) are now sized to fit their widest label at the current font size - `<->` previously overflowed its fixed 28px button. The space reserved beside each slider grows to match.
+- "Hide helper text" is now on by default. An explicitly unticked setting is kept.
+
+**Fixes**
+- Fixed a crash ("Missing EndChild()") caused by `ImGui_CalcTextSize` returning both width and height: as the last argument to `math.max`, the extra value was passed along too and the comparison failed. The calls now keep only the width.
+- Each frame now runs through `xpcall`: any Lua error prints the real message, line number, and call stack to the ReaScript console and stops the script cleanly, instead of surfacing only as a secondary ImGui error.
+
 ## v1.49
 
 UI-only - no engine changes.
