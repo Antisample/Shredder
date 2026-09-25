@@ -1,5 +1,5 @@
 -- @description Antisample Shredder
--- @version 1.48
+-- @version 1.49
 -- @author Zdravko Djordjević
 -- @provides
 --   Antisample_Shredder_Engine.lua
@@ -25,17 +25,12 @@
 --   See README.md for full usage details and CHANGELOG.md for version
 --   history.
 -- @changelog
---   See CHANGELOG.md for the full version history - this header only
---   carries the most recent entry, for ReaPack's package details view.
---   v1.48: New per-chunk Stretch (+/-1000%, pitch preserved); take
---   pitch shift / time stretch mode setting (Fixed or Randomized per
---   chunk); rewritten multi-band Transient detector with sample-
---   accurate, zero-crossing cuts; Init renames the preset and a "*"
---   marks edited presets; collapsible, tidier Settings tab with a
---   pinned status bar.
+--   - Removed extra padding and separator above Run Shredder
+--   - Added Run Shredder button color selection (Settings > Appearance)
+--   - Fixed button color picker showing wrong colors
 
 --[[
-     Antisample Shredder UI v1.48
+     Antisample Shredder UI v1.49
      Requires: ReaImGui (via ReaPack / ReaTeam Extensions)
 
      Full version history lives in CHANGELOG.md (in the same folder as
@@ -354,6 +349,7 @@ local KEYS = {
   PARALLEL_CHAIN_ENABLED = "ParallelChainEnabled",
   PALETTE_NAME = "PaletteName",
   FONT_COLOR_NAME = "FontColorName",
+  RUN_BUTTON_COLOR = "RunButtonColor",
   BYPASS = "NUM_EFFECTS_TO_BYPASS",
   RANDOM_SKIP_PARAMS = "RandomFXSkipParams",
   Shredder_CUT_LENGTH = "ShredderCutLength",
@@ -866,6 +862,35 @@ if active_font_color_name ~= "" then
       break
     end
   end
+end
+
+-- Run Shredder button color (Settings > Appearance > Color Palette),
+-- 0xRRGGBBAA. nil = follow the palette's accent like every other
+-- button. Hover/pressed shades and a readable text color are derived
+-- from it, so one pick is enough.
+local run_button_color = tonumber(reaper.GetExtState(EXT_SECTION, KEYS.RUN_BUTTON_COLOR))
+
+-- Scales each RGB channel toward white (amount > 0) or black (amount
+-- < 0) by |amount| (0-1), keeping alpha.
+local function shade_color(rgba, amount)
+  local r = (rgba >> 24) & 0xFF
+  local g = (rgba >> 16) & 0xFF
+  local b = (rgba >> 8) & 0xFF
+  local a = rgba & 0xFF
+  local function mix(c)
+    if amount >= 0 then return math.floor(c + (255 - c) * amount + 0.5) end
+    return math.floor(c * (1 + amount) + 0.5)
+  end
+  return (mix(r) << 24) | (mix(g) << 16) | (mix(b) << 8) | a
+end
+
+-- Near-black or white, whichever reads better on `rgba`.
+local function contrast_text_color(rgba)
+  local r = (rgba >> 24) & 0xFF
+  local g = (rgba >> 16) & 0xFF
+  local b = (rgba >> 8) & 0xFF
+  local luminance = 0.299 * r + 0.587 * g + 0.114 * b
+  return luminance > 150 and 0x1A1A1AFF or 0xFFFFFFFF
 end
 
 -- Maps ImGui color slot NAME (as in reaper.ImGui_Col_<name>) to the
@@ -2324,18 +2349,26 @@ local function shredder_init_everything()
   set_status("Init: every Shredder setting reset to default.", false)
 end
 
--- The Run Shredder button itself (plus the separator above it) - a
--- standalone function so it can be called from either end of the
--- Shredder tab depending on SD.pin_position ("top" or "bottom"),
--- rather than duplicating this block or fighting over where in the
--- source it physically sits.
+-- The Run Shredder button itself - a standalone function so it can be
+-- called from either end of the Shredder tab depending on
+-- SD.pin_position ("top" or "bottom"), rather than duplicating this
+-- block or fighting over where in the source it physically sits.
+-- Uses run_button_color when one is set in Settings, otherwise the
+-- palette's normal button colors.
 local function shredder_run_button()
-  reaper.ImGui_Dummy(ctx, 0, 8)
-  reaper.ImGui_Separator(ctx)
-  reaper.ImGui_Dummy(ctx, 0, 8)
+  if run_button_color then
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Button(), run_button_color)
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonHovered(), shade_color(run_button_color, 0.15))
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_ButtonActive(), shade_color(run_button_color, -0.2))
+    reaper.ImGui_PushStyleColor(ctx, reaper.ImGui_Col_Text(), contrast_text_color(run_button_color))
+  end
 
   if reaper.ImGui_Button(ctx, "Run Shredder", -1, 50) then
     run_script(SCRIPT_SHREDDER, "Antisample_Shredder_Engine.lua")
+  end
+
+  if run_button_color then
+    reaper.ImGui_PopStyleColor(ctx, 4)
   end
 end
 
@@ -2655,7 +2688,7 @@ local function draw()
         -- message is still the one edge case that could reintroduce a
         -- sliver of scroll; a genuinely fixed-height single-line
         -- status readout would close that gap entirely if it recurs.
-        local RUN_BUTTON_RESERVE_H = 80   -- button (50) + its own Dummy/Separator/Dummy padding
+        local RUN_BUTTON_RESERVE_H = 54   -- button (50) + one item-spacing gap above it
         local STATUS_BAR_RESERVE_H = 40   -- Separator + one line of status text, with margin
 
         if SD.pin_position == "top" then
@@ -3495,6 +3528,32 @@ local function draw()
             reaper.ImGui_SameLine(ctx)
           end
         end
+
+        reaper.ImGui_Dummy(ctx, 0, 8)
+        reaper.ImGui_Text(ctx, "Run Shredder button color")
+        reaper.ImGui_Dummy(ctx, 0, 4)
+        do
+          -- ColorEdit3 works in 0xRRGGBB; the rest of this file (and
+          -- run_button_color) uses 0xRRGGBBAA, so convert both ways.
+          local picker_flags = reaper.ImGui_ColorEditFlags_NoInputs()
+          local shown = (run_button_color or THEME_ORANGE) >> 8
+          local rb_changed, new_rb = reaper.ImGui_ColorEdit3(ctx, "##run_button_color", shown, picker_flags)
+          if rb_changed then
+            run_button_color = ((new_rb & 0xFFFFFF) << 8) | 0xFF -- always fully opaque
+            reaper.SetExtState(EXT_SECTION, KEYS.RUN_BUTTON_COLOR, tostring(run_button_color), true)
+          end
+          reaper.ImGui_SameLine(ctx, 0, 8)
+          reaper.ImGui_Text(ctx, run_button_color and "Custom" or "Palette default")
+          if run_button_color then
+            reaper.ImGui_SameLine(ctx, 0, 12)
+            if reaper.ImGui_Button(ctx, "Reset##run_button_color") then
+              run_button_color = nil
+              reaper.DeleteExtState(EXT_SECTION, KEYS.RUN_BUTTON_COLOR, true)
+              set_status("Run Shredder button color reset to palette default.", false)
+            end
+          end
+        end
+        reaper.ImGui_Dummy(ctx, 0, 4)
 
         reaper.ImGui_Spacing(ctx)
         end -- Color Palette

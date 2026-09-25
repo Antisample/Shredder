@@ -3,6 +3,13 @@
 All notable changes to Antisample Shredder (`Antisample_Shredder_UI.lua` +
 `Antisample_Shredder_Engine.lua`) are documented here, newest first.
 
+## v1.49
+
+UI-only - no engine changes.
+- Removed the extra padding and separator line above Run Shredder, so it now has the same small gap above it as below. The scroll region's reserve for the bottom-pinned button dropped from 80 to 54px to match.
+- New "Run Shredder button color" picker (Settings > Appearance > Color Palette). Hover and pressed shades are derived from the picked color, and the button's text switches between near-black and white for readability. "Reset" returns it to the palette's accent. Saved per install (`RunButtonColor`), not part of presets. Uses `ColorEdit3` (0xRRGGBB), converted to/from the file's 0xRRGGBBAA colors - an earlier attempt with `ColorEdit4` + NoAlpha read colors one byte off (orange showed as violet).
+- Removed the documentation files from `@provides` for now; README no longer links to them. The README now includes the ReaPack import URL and a link to this changelog.
+
 ## v1.48
 
 Engine + UI. New per-chunk Stretch, pitch shift / time stretch mode control, a rewritten Transient detector, preset-bar fixes, and a Settings tab cleanup.
