@@ -824,8 +824,9 @@ local SILENCE_SAMPLERATE = 8000 -- downsampled read rate for the silence check, 
 --   POSITION_INTENSITY (0-150ms): each segment's placed position gets
 --     an extra +/- random offset up to this many ms, on top of the
 --     normal sequential reshuffle placement. 0 = no jitter.
---   RATE_INTENSITY (1x-3x): each segment's take playrate is randomized
---     between 1x (neutral) and this value. 1 = no randomization.
+--   RATE_INTENSITY (1x-6x): each segment's take playrate is randomized
+--     between 1x (neutral) and this value - faster, slower, or either,
+--     per RATE_DIRECTION below. 1 = no randomization.
 --   PITCH_INTENSITY (-12 to +12 semitones): each segment's take pitch
 --     is randomized anywhere in [-|intensity|, +|intensity|] - fully
 --     bipolar; the slider's own sign doesn't matter, only its
@@ -858,6 +859,12 @@ if not valid_direction(POSITION_DIRECTION) then POSITION_DIRECTION = "both" end
 if not valid_direction(PITCH_DIRECTION) then PITCH_DIRECTION = "both" end
 if not valid_direction(PAN_DIRECTION) then PAN_DIRECTION = "both" end
 if not valid_direction(VOLUME_DIRECTION) then VOLUME_DIRECTION = "both" end
+
+-- Rate direction: "pos" (default - faster only, 1x..Rate, the original
+-- behavior, so existing presets sound unchanged), "neg" (slower only,
+-- the mirror image: 1x..1/Rate), or "both" (either, 50/50 per chunk).
+local RATE_DIRECTION = reaper.GetExtState(EXT_SECTION, "ShredderRateDirection")
+if not valid_direction(RATE_DIRECTION) then RATE_DIRECTION = "pos" end
 
 -- Stretch (0-1000%, or 0-3000% with Extreme stretch on in Settings):
 -- each segment gets a random time-stretch anywhere in
@@ -928,6 +935,11 @@ local SCATTER_REPEATS = reaper.GetExtState(EXT_SECTION, "ShredderScatterRepeats"
 -- each decided independently) gets muted rather than removed - stays
 -- in its slot, contributing silence when glued.
 local MUTE_PROBABILITY = tonumber(reaper.GetExtState(EXT_SECTION, "ShredderMute")) or 0
+-- The Chunk Mute slider is hidden by default (Settings > Shredder
+-- Behaviour > Show Chunk Mute slider). While hidden it has no effect,
+-- so a value you can't see never silently mutes chunks. Cantor Dust
+-- and Morse's structural silence is separate and always applies.
+if reaper.GetExtState(EXT_SECTION, "ShredderShowChunkMute") ~= "1" then MUTE_PROBABILITY = 0 end
 
 local GLUE_COMMAND_ID = 40362 -- native "Item: Glue items"
 local REVERSE_COMMAND_ID = 41051 -- native "Item properties: Toggle take reverse"
@@ -956,7 +968,12 @@ if RENDER_NAME_PATTERN == "" then RENDER_NAME_PATTERN = "Shredder_{number}" end
 -- CORE LOGIC
 -------------------------------------------------------------------
 
-math.randomseed(os.time())
+-- Seeded from REAPER's high-resolution timer (microseconds) rather than
+-- os.time(), which only changes once per second - with os.time(), two
+-- runs started within the same second produced identical "random"
+-- results. math.floor keeps it an integer, which Lua 5.4's randomseed
+-- requires.
+math.randomseed(math.floor(reaper.time_precise() * 1000000))
 
 -- Persistent counter for naming glued results "Shredder_<n>" -
 -- survives across runs so repeated use doesn't collide names.
@@ -2279,7 +2296,9 @@ local function randomize_segment_properties(seg)
   local rate, pitch
 
   if RATE_INTENSITY > 1 then
-    rate = 1 + math.random() * (RATE_INTENSITY - 1)
+    local factor = 1 + math.random() * (RATE_INTENSITY - 1)
+    local slower = RATE_DIRECTION == "neg" or (RATE_DIRECTION == "both" and math.random() < 0.5)
+    rate = slower and (1 / factor) or factor
   end
 
   -- Pitch/Pan/Volume are fully bipolar: at intensity X (and Direction
