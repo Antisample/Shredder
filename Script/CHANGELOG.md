@@ -3,6 +3,19 @@
 All notable changes to Antisample Shredder (`Antisample_Shredder_UI.lua` +
 `Antisample_Shredder_Engine.lua`) are documented here, newest first.
 
+## v1.51
+
+Engine + UI.
+
+- **Random** now rerolls every section, not just Chunk Randomization: it picks a new Cut Mode and randomizes that mode's own settings (other modes keep theirs), and rerolls "Now, Put It Together..." - Shuffle Mode and its settings, Palindrome, Ordered-Subset (with Keep), and Ignore Silence. Palindrome and Ordered-Subset come up less often (30%) since they change length a lot. Never touched: Morse's message, Sequence's Custom weights, Loop checkboxes, Minimum Chunk Length, and Mash Together / Process Individually. Two new checkboxes under Settings > Randomization Settings, "Cut Mode" and "Put It Together" (both on by default), control this alongside the existing per-slider ones (`ShredderRandIncludeCutMode`, `ShredderRandIncludeStructure`).
+- New "Show preset bar" checkbox (Settings > Appearance > Layout, on by default) hides the preset name field and Save / Load / Random row. Not part of presets (`ShredderShowPresets`).
+- Sliders: **double-click** a slider to type a value (previously Ctrl+click), and **Ctrl+click** now resets it to 0 - or to the slider's minimum when 0 is out of range (Rate resets to 1x, Cut Length to 10ms). Typed values are clamped to the slider's range (ReaImGui 0.10+). All Shredder-tab sliders go through one shared `shredder_slider()` helper: it turns off ImGui's own Ctrl+click-to-type (`SliderFlags_NoInput`), detects both gestures from the slider's previous-frame rectangle before drawing it, and enters typing mode via `SetKeyboardFocusHere`. A double-click also restores the value from before its first click, since a single click on a slider jumps the value to the mouse.
+- Rate now has Direction buttons (`<-` `<->` `->`) like Position/Pan/Volume/Stretch/Pitch: `->` faster only (1x up to Rate - the default, matching Rate's original behavior so existing presets sound the same), `<-` slower only (the mirror image, 1x down to 1/Rate), `<->` either, 50/50 per chunk. Part of the preset schema (`ShredderRateDirection`), reset to `->` by Init.
+- Chunk Mute slider is now hidden by default, with a new "Show Chunk Mute slider" checkbox (Settings > Shredder Behaviour). While hidden, the engine ignores Chunk Mute entirely (even if a preset sets it) and Random leaves it alone, so no invisible value mutes chunks; Cantor Dust and Morse's structural silence still applies. A preference, not part of presets (`ShredderShowChunkMute`).
+
+**Fixes**
+- Runs started within the same second no longer produce identical results: the engine's random seed now comes from `reaper.time_precise()` (microseconds) instead of `os.time()` (whole seconds).
+
 ## v1.50
 
 Engine + UI.
@@ -17,16 +30,10 @@ Engine + UI.
 - Palindrome Mode, Ordered-Subset Mode, and Ignore Silence checkboxes are laid out in two columns, dropping to a single column automatically when the window is too narrow for them to fit.
 
 **Other UI**
-- **Random** now rerolls every section, not just Chunk Randomization: it picks a new Cut Mode and randomizes that mode's own settings (other modes keep theirs), and rerolls "Now, Put It Together..." - Shuffle Mode and its settings, Palindrome, Ordered-Subset (with Keep), and Ignore Silence. Palindrome and Ordered-Subset come up less often (30%) since they change length a lot. Never touched: Morse's message, Sequence's Custom weights, Loop checkboxes, Minimum Chunk Length, and Mash Together / Process Individually. Two new checkboxes under Settings > Randomization Settings, "Cut Mode" and "Put It Together" (both on by default), control this alongside the existing per-slider ones (`ShredderRandIncludeCutMode`, `ShredderRandIncludeStructure`).
-- New "Show preset bar" checkbox (Settings > Appearance > Layout, on by default) hides the preset name field and Save / Load / Random row. Not part of presets (`ShredderShowPresets`).
-- Sliders: **double-click** a slider to type a value (previously Ctrl+click), and **Ctrl+click** now resets it to 0 - or to the slider's minimum when 0 is out of range (Rate resets to 1x, Cut Length to 10ms). Typed values are clamped to the slider's range (ReaImGui 0.10+). All Shredder-tab sliders go through one shared `shredder_slider()` helper: it turns off ImGui's own Ctrl+click-to-type (`SliderFlags_NoInput`), detects both gestures from the slider's previous-frame rectangle before drawing it, and enters typing mode via `SetKeyboardFocusHere`. A double-click also restores the value from before its first click, since a single click on a slider jumps the value to the mouse.
-- Rate now has Direction buttons (`<-` `<->` `->`) like Position/Pan/Volume/Stretch/Pitch: `->` faster only (1x up to Rate - the default, matching Rate's original behavior so existing presets sound the same), `<-` slower only (the mirror image, 1x down to 1/Rate), `<->` either, 50/50 per chunk. Part of the preset schema (`ShredderRateDirection`), reset to `->` by Init.
-- Chunk Mute slider is now hidden by default, with a new "Show Chunk Mute slider" checkbox (Settings > Shredder Behaviour). While hidden, the engine ignores Chunk Mute entirely (even if a preset sets it) and Random leaves it alone, so no invisible value mutes chunks; Cantor Dust and Morse's structural silence still applies. A preference, not part of presets (`ShredderShowChunkMute`).
 - Direction buttons (`<-` `<->` `->`) are now sized to fit their widest label at the current font size - `<->` previously overflowed its fixed 28px button. The space reserved beside each slider grows to match.
 - "Hide helper text" is now on by default. An explicitly unticked setting is kept.
 
 **Fixes**
-- Runs started within the same second no longer produce identical results: the engine's random seed now comes from `reaper.time_precise()` (microseconds) instead of `os.time()` (whole seconds).
 - Fixed a crash ("Missing EndChild()") caused by `ImGui_CalcTextSize` returning both width and height: as the last argument to `math.max`, the extra value was passed along too and the comparison failed. The calls now keep only the width.
 - Each frame now runs through `xpcall`: any Lua error prints the real message, line number, and call stack to the ReaScript console and stops the script cleanly, instead of surfacing only as a secondary ImGui error.
 

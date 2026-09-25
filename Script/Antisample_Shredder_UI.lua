@@ -1,5 +1,5 @@
 -- @description Antisample Shredder
--- @version 1.50
+-- @version 1.51
 -- @author Zdravko Djordjević
 -- @provides
 --   Antisample_Shredder_Engine.lua
@@ -25,22 +25,15 @@
 --   See README.md for full usage details and CHANGELOG.md for version
 --   history.
 -- @changelog
---   - Stretch limit 1000% by default, new Extreme stretch option (3000%)
---   - Time stretch mode now defaults to Randomized
---   - Option to show stretch mode in the Shredder tab
---   - Mode and Preview buttons side by side, options in two columns
 --   - Random now rerolls every section (Cut Mode, Put It Together, sliders)
 --   - Option to show/hide the preset bar
 --   - Double-click a slider to type a value, Ctrl+click to reset it
---   - Direction buttons sized to fit their labels
 --   - Rate gets direction buttons (slower / either / faster)
 --   - Chunk Mute slider hidden by default (option in Settings)
---   - Hide helper text on by default
---   - Fixed "Missing EndChild()" crash, clearer error reporting
 --   - Fixed quick repeated runs giving identical results
 
 --[[
-     Antisample Shredder UI v1.50
+     Antisample Shredder UI v1.51
      Requires: ReaImGui (via ReaPack / ReaTeam Extensions)
 
      Full version history lives in CHANGELOG.md (in the same folder as
