@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<index version="1" commit="df4d2d5d274ba5718bc83c4fade41daaac8cab1e" name="Antisample Shredder">
+<index version="1" commit="7aa782d7b47d732cc9556dd90dee619c70788c82" name="Antisample Shredder">
   <category name="Script">
     <reapack name="Antisample_Shredder_UI.lua" type="script" desc="Antisample Shredder">
       <metadata>
@@ -8,7 +8,7 @@
 \widowctrl\hyphauto
 
 {\pard \ql \f0 \fs24 \sa180 \li0 \fi0 \outlinelevel0 \b \fs34 Antisample Shredder\par}
-{\pard \ql \f0 \fs24 \sa180 \li0 \fi0 A glitch/stutter tool: chops selected item(s) into randomized segments using any of 11 Cut Modes (Euclidean rhythms, Fibonacci- style sequences, Collatz chaos, Cantor Dust fractals, Morse code, and more), reshuffles them, randomizes per-segment pitch/pan/ volume/rate/reverse, and either glues the result into one item or (the default) leaves the cut pieces grouped and selected for further manual editing. Includes a preset system, three starter presets, and a live preview of exactly what a run will produce before you commit to it.\par}
+{\pard \ql \f0 \fs24 \sa180 \li0 \fi0 A glitch/stutter tool: chops selected item(s) into randomized segments using any of 11 Cut Modes (Euclidean rhythms, Fibonacci- style sequences, Collatz chaos, Cantor Dust fractals, Morse code, and more), reshuffles them, randomizes per-segment pitch/pan/ volume/rate/stretch/reverse, and either glues the result into one item or (the default) leaves the cut pieces grouped and selected for further manual editing. Includes a preset system, a set of starter presets, and a live preview of exactly what a run will produce before you commit to it.\par}
 {\pard \ql \f0 \fs24 \sa180 \li0 \fi0 Requires the ReaImGui extension - install it first via Extensions > ReaPack > Browse packages, under ReaTeam Extensions.\par}
 {\pard \ql \f0 \fs24 \sa180 \li0 \fi0 See README.md for full usage details and CHANGELOG.md for version history.\par}
 }
@@ -68,6 +68,26 @@ pinned status bar.]]></changelog>
         <source file="Presets/Synced Randomnes.txt">https://github.com/Antisample/Shredder/raw/df4d2d5d274ba5718bc83c4fade41daaac8cab1e/Script/Presets/Synced%20Randomnes.txt</source>
         <source file="CHANGELOG.md">https://github.com/Antisample/Shredder/raw/df4d2d5d274ba5718bc83c4fade41daaac8cab1e/Script/CHANGELOG.md</source>
         <source file="README.md">https://github.com/Antisample/Shredder/raw/df4d2d5d274ba5718bc83c4fade41daaac8cab1e/Script/README.md</source>
+      </version>
+      <version name="1.50" author="Zdravko Djordjević" time="2026-09-25T13:25:10Z">
+        <changelog><![CDATA[- Stretch limit 1000% by default, new Extreme stretch option (3000%)
+- Time stretch mode now defaults to Randomized
+- Option to show stretch mode in the Shredder tab
+- Mode and Preview buttons side by side, options in two columns
+- Direction buttons sized to fit their labels
+- Hide helper text on by default
+- Fixed "Missing EndChild()" crash, clearer error reporting]]></changelog>
+        <source main="main">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Antisample_Shredder_UI.lua</source>
+        <source file="Antisample_Shredder_Engine.lua">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Antisample_Shredder_Engine.lua</source>
+        <source file="Presets/Blackhole Stutter.txt">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Presets/Blackhole%20Stutter.txt</source>
+        <source file="Presets/Classic Glitch.txt">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Presets/Classic%20Glitch.txt</source>
+        <source file="Presets/Every 3rd Number.txt">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Presets/Every%203rd%20Number.txt</source>
+        <source file="Presets/Fibonacci 13 segments.txt">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Presets/Fibonacci%2013%20segments.txt</source>
+        <source file="Presets/Glitch me out.txt">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Presets/Glitch%20me%20out.txt</source>
+        <source file="Presets/Morse Shredder.txt">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Presets/Morse%20Shredder.txt</source>
+        <source file="Presets/Synced Randomnes.txt">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/Presets/Synced%20Randomnes.txt</source>
+        <source file="CHANGELOG.md">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/CHANGELOG.md</source>
+        <source file="README.md">https://github.com/Antisample/Shredder/raw/7aa782d7b47d732cc9556dd90dee619c70788c82/Script/README.md</source>
       </version>
     </reapack>
   </category>
