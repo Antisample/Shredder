@@ -6,6 +6,9 @@ pitch/pan/volume/rate/reverse, and either leaves the cut pieces grouped and
 selected for further editing (the default) or glues the result into a single
 rendered item.
 
+For version history, see
+[CHANGELOG.md](https://github.com/Antisample/Shredder/blob/main/Script/CHANGELOG.md).
+
 ## Requirements
 
 - REAPER
@@ -15,9 +18,20 @@ rendered item.
 
 ## Installation
 
-**Via ReaPack** (recommended): import this repository's `index.xml` URL under
-`Extensions > ReaPack > Import a repository...`, then install "Antisample
-Shredder" from `Extensions > ReaPack > Browse packages`.
+**Via ReaPack** (recommended):
+
+1. In REAPER, go to `Extensions > ReaPack > Import repositories...`
+2. Paste this URL and click OK:
+
+   ```
+   https://github.com/Antisample/Shredder/raw/main/index.xml
+   ```
+
+3. Open `Extensions > ReaPack > Browse packages`, search for "Antisample
+   Shredder", and install it.
+
+Updates then arrive through ReaPack like any other package
+(`Extensions > ReaPack > Synchronize packages`).
 
 **Manually**: copy `Antisample_Shredder_UI.lua`, `Antisample_Shredder_Engine.lua`,
 and the `Presets/` folder into the same directory under REAPER's
@@ -48,10 +62,9 @@ item.
 
 Three groups, one mode active at a time:
 
-- **Classic** - By Cut Length, By Number of Cuts, Beat-Synced (tempo-grid
-  locked, with humanize).
-- **Sequence** - Fibonacci/Lucas/Padovan/Tribonacci/Custom weighted cuts,
-  Euclidean/rhythmic distribution, Onset/Transient detection.
+- **Classic** - By Cut Length, By Number of Cuts, Beat-Synced (tempo divisions
+  with humanize), Euclidean/rhythmic distribution, Transient detection.
+- **Sequence** - Fibonacci/Lucas/Padovan/Tribonacci/Custom weighted cuts.
 - **Bizarre** - Blackhole (geometric decay, with a Loop and White Hole/reverse-
   trend option), Pitagora (Pythagorean-triple ratios), Collatz (the "3n+1"
   sequence as segment-length weights), Cantor Dust (fractal gaps), Morse Code
@@ -72,9 +85,10 @@ Shredder Behaviour) for exact segment sizes / exact cut counts instead.
 
 ### Per-Segment Randomization
 
-Position, Rate, Pitch, Pan, Volume, Reverse, Repeats, and Mute, each
+Position, Rate, Pitch, Pan, Volume, Stretch, Reverse, Repeats, and Mute, each
 independently controlled - no master gate, every slider does its own thing at
-its own amount. Position, Pitch, Pan, and Volume additionally support
+its own amount. **Stretch** lengthens or shortens each chunk by up to 1000%
+while keeping its pitch. Position, Pitch, Pan, Volume, and Stretch additionally support
 **Direction** (both/negative-only/positive-only). **Scatter Repeats** spreads
 repeat-duplicate copies throughout the result instead of clustering them right
 after their source. **Init** resets every sound-affecting setting in the tab
@@ -92,15 +106,18 @@ on its own, staying separate).
 Save, load, or load-a-random-saved-preset from the bar at the top of the
 Shredder tab. Presets capture every sound-affecting setting (Cut Mode and its
 parameters, Structural Modes, Per-Segment Randomization, Multi-item mode) -
-not layout/appearance preferences, which are per-install instead. Three
-starter presets ship in `Presets/`.
+not layout/appearance preferences, which are per-install instead. A **\***
+next to the preset name shows when you've changed something since loading it.
+A set of starter presets (including `_Init`) ships in `Presets/`.
 
 ### Settings tab
 
-- **Appearance** - font size, color palette, font color, and Layout (which
-  end of the tab Run Shredder pins to, and Compact Mode for narrow docks).
-- **Shredder Behaviour** - Cut Variance, Cut but don't render, Hide Helper
-  Text, and other tab-wide behavior.
+- **Appearance** - Color Palette, Font and Font Color (including font size),
+  and Layout (which end of the tab Run Shredder pins to, and Compact Mode for
+  narrow docks).
+- **Shredder Behaviour** - Cut Variance, Take Pitch Shift / Time Stretch Mode
+  (one mode for every chunk, or a random pick per chunk), Cut but don't
+  render, and Hide Helper Text.
 - **Randomization Settings** - which Per-Segment properties the Random button
   is allowed to reroll.
 - **Render Settings** - naming pattern for the glued result (when Cut but
